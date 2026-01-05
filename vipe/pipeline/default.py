@@ -128,11 +128,11 @@ class DefaultAnnotationPipeline(Pipeline):
             return annotate_output
 
         output_streams = [
-            self._add_post_processors(view_idx, slam_stream, slam_output).cache("depth", online=True)
+            self._add_post_processors(view_idx, slam_stream, slam_output).cache("depth", online=False)
             for view_idx, slam_stream in enumerate(slam_streams)
         ]
 
-        # Release slam_streams cache to free CPU memory
+        # Release slam_streams cache to free CPU memory (output_streams already fully cached)
         for slam_stream in slam_streams:
             slam_stream.clear_cache()
 
