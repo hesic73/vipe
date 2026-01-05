@@ -132,6 +132,10 @@ class DefaultAnnotationPipeline(Pipeline):
             for view_idx, slam_stream in enumerate(slam_streams)
         ]
 
+        # Release slam_streams cache to free CPU memory
+        for slam_stream in slam_streams:
+            slam_stream.clear_cache()
+
         # Dumping artifacts for all views in the streams
         for output_stream, artifact_path in zip(output_streams, artifact_paths):
             artifact_path.meta_info_path.parent.mkdir(exist_ok=True, parents=True)

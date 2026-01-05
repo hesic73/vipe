@@ -414,6 +414,11 @@ class CachedVideoStream(VideoStream):
     def attributes(self) -> set[FrameAttribute]:
         return self._attributes
 
+    def clear_cache(self) -> None:
+        """Clear the cached data to free CPU memory."""
+        self.data.clear()
+        self.iterator = None
+
 
 class StreamProcessor(Protocol):
     """
