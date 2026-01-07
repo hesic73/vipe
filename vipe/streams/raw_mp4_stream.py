@@ -14,9 +14,15 @@
 # limitations under the License.
 
 from pathlib import Path
+import os
+
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 import cv2
 import torch
+
+cv2.setNumThreads(0)
 
 from vipe.streams.base import ProcessedVideoStream, StreamList, VideoFrame, VideoStream
 

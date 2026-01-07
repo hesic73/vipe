@@ -118,10 +118,10 @@ class DefaultAnnotationPipeline(Pipeline):
             return annotate_output
 
         # [Optimized] Remove .cache() calls to prevent loading full video to memory
-        # [Optimized] Use PrefetchVideoStream to overlap I/O and computation
-        # [Optimized] to_cuda=True moves frames to GPU in main thread
+        # [Optimized] Remove .cache() calls to prevent loading full video to memory
+        # [Stability] PrefetchVideoStream disabled due to FFmpeg threading issues.
         slam_streams: list[VideoStream] = [
-            self._add_init_processors(PrefetchVideoStream(video_stream, to_cuda=True)) for video_stream in video_streams
+            self._add_init_processors(video_stream) for video_stream in video_streams
         ]
 
         # SLAM system consumes the streams first

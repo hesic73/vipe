@@ -14,16 +14,25 @@
 # limitations under the License.
 
 from pathlib import Path
+import logging
 
 import click
+import cv2
 import hydra
+import torch
+from omegaconf import DictConfig
 
-from vipe import get_config_path, make_pipeline
+from vipe import get_config_path
+from vipe.pipeline import make_pipeline
 from vipe.streams.base import ProcessedVideoStream
 from vipe.streams.raw_mp4_stream import RawMp4Stream
 from vipe.streams.frame_dir_stream import FrameDirStream
 from vipe.utils.logging import configure_logging
 from vipe.utils.viser import run_viser
+
+cv2.setNumThreads(0)
+
+logger = logging.getLogger(__name__)
 
 
 @click.command()
@@ -87,8 +96,8 @@ def infer(video: Path, image_dir: Path, output: Path, pipeline: str, visualize: 
     else:
         # Some input videos can be malformed, so we need to cache the videos to obtain correct number of frames.
         # [Optimized] We skip caching to save memory.
-        # [Optimized] Load on CPU for prefetching safety
-        video_stream = ProcessedVideoStream(RawMp4Stream(video, device="cpu"), [])
+        # [Stability] Reverted to CUDA loading since prefetching is disabled.
+        video_stream = ProcessedVideoStream(RawMp4Stream(video), [])
 
     vipe_pipeline.run(video_stream)
     logger.info("Finished")
