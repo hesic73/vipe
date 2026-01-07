@@ -27,8 +27,9 @@ class RawMp4Stream(VideoStream):
     This does not support nested iterations.
     """
 
-    def __init__(self, path: Path, seek_range: range | None = None, name: str | None = None) -> None:
+    def __init__(self, path: Path, seek_range: range | None = None, name: str | None = None, device: str = "cuda") -> None:
         super().__init__()
+        self.device = device
         if seek_range is None:
             seek_range = range(-1)
 
@@ -87,7 +88,7 @@ class RawMp4Stream(VideoStream):
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_rgb = torch.as_tensor(frame).float() / 255.0
-        frame_rgb = frame_rgb.cuda()
+        frame_rgb = frame_rgb.to(self.device)
 
         return VideoFrame(raw_frame_idx=self.current_frame_idx, rgb=frame_rgb)
 

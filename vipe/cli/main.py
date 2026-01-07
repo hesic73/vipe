@@ -87,7 +87,8 @@ def infer(video: Path, image_dir: Path, output: Path, pipeline: str, visualize: 
     else:
         # Some input videos can be malformed, so we need to cache the videos to obtain correct number of frames.
         # [Optimized] We skip caching to save memory.
-        video_stream = ProcessedVideoStream(RawMp4Stream(video), [])
+        # [Optimized] Load on CPU for prefetching safety
+        video_stream = ProcessedVideoStream(RawMp4Stream(video, device="cpu"), [])
 
     vipe_pipeline.run(video_stream)
     logger.info("Finished")
