@@ -19,6 +19,7 @@ Output:
         ...
 """
 
+import sys
 import argparse
 import json
 import os
@@ -77,7 +78,7 @@ def run_vipe(video_path: str, output_dir: str) -> int:
     logger.info(f"Running VIPE on {video_path}")
     logger.info(f"Output dir: {output_dir}")
     
-    cmd = f"vipe infer {video_path} --output {output_dir}"
+    cmd = f"{sys.executable} -m vipe.cli.main infer {video_path} --output {output_dir}"
     logger.info(f"Executing: {cmd}")
     
     result = subprocess.call(cmd, shell=True)
