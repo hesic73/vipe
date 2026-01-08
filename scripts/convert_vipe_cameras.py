@@ -313,10 +313,20 @@ def process_video(
         output_path = os.path.join(video_out_dir, output_filename)
         save_cameras_npz(output_path, w2c, intrinsics)
         
+        # Copy/symlink the video file to the output directory
+        video_dest = os.path.join(video_out_dir, Path(video_path).name)
+        if not os.path.exists(video_dest):
+            # Use symlink if on same filesystem, otherwise copy
+            try:
+                os.symlink(os.path.abspath(video_path), video_dest)
+                logger.info(f"Created symlink: {video_dest} -> {video_path}")
+            except OSError:
+                # Fallback to copy if symlink fails
+                shutil.copy2(video_path, video_dest)
+                logger.info(f"Copied video to: {video_dest}")
+        
     except Exception as e:
         logger.error(f"Failed to process {video_name}: {e}")
-        # import traceback
-        # logger.error(traceback.format_exc())
 
 
 def main():
