@@ -371,3 +371,5 @@ xxhash==3.5.0
     # via trimesh
 yourdfpy==0.0.58
     # via viser
+
+loguru
