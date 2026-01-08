@@ -16,6 +16,8 @@
 import copy
 import importlib
 import logging
+import queue
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Iterable, Iterator, Protocol
@@ -414,6 +416,11 @@ class CachedVideoStream(VideoStream):
     def attributes(self) -> set[FrameAttribute]:
         return self._attributes
 
+    def clear_cache(self) -> None:
+        """Clear the cached data to free CPU memory."""
+        self.data.clear()
+        self.iterator = None
+
 
 class StreamProcessor(Protocol):
     """
@@ -509,6 +516,69 @@ class ProcessedVideoStream(VideoStream):
                 for _ in pbar(iterator, desc=f"Pre-iterating for pass {pass_idx}"):
                     pass
         return iterator
+
+
+class PrefetchVideoStream(VideoStream):
+    """
+    Prefetch a video stream using a background thread.
+    """
+
+    def __init__(self, video_stream: VideoStream, queue_size: int = 16, to_cuda: bool = False, to_cpu: bool = False) -> None:
+        self.stream = video_stream
+        self.queue_size = queue_size
+        self._name = video_stream.name()
+        self.to_cuda = to_cuda
+        self.to_cpu = to_cpu
+        
+    def frame_size(self) -> tuple[int, int]:
+        return self.stream.frame_size()
+
+    def fps(self) -> float:
+        return self.stream.fps()
+
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self.stream)
+    
+    def attributes(self) -> set[FrameAttribute]:
+        return self.stream.attributes()
+
+    def __iter__(self):
+        self.queue = queue.Queue(maxsize=self.queue_size)
+        self.stop_event = threading.Event()
+        self.exception = None
+        
+        def producer():
+            try:
+                for frame in self.stream:
+                    if self.stop_event.is_set():
+                        break
+                    if self.to_cpu:
+                        frame = frame.cpu()
+                    self.queue.put(frame)
+            except Exception as e:
+                self.exception = e
+            finally:
+                self.queue.put(None) # Sentinel
+
+        self.thread = threading.Thread(target=producer, daemon=True)
+        self.thread.start()
+        return self
+
+    def __next__(self) -> VideoFrame:
+        if self.exception:
+            raise self.exception
+            
+        frame = self.queue.get()
+        if frame is None:
+            raise StopIteration
+            
+        if self.to_cuda:
+            frame = frame.cuda()
+            
+        return frame
 
 
 class StreamList:

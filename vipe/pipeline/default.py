@@ -28,13 +28,14 @@ from vipe.streams.base import (
     AssignAttributesProcessor,
     FrameAttribute,
     MultiviewVideoList,
+    PrefetchVideoStream,
     ProcessedVideoStream,
     StreamProcessor,
     VideoStream,
 )
 from vipe.utils import io
 from vipe.utils.cameras import CameraType
-from vipe.utils.visualization import save_projection_video
+from vipe.utils.visualization import VisualizationWriter, save_projection_video
 
 from . import AnnotationPipelineOutput, Pipeline
 from .processors import (
@@ -116,13 +117,14 @@ class DefaultAnnotationPipeline(Pipeline):
             logger.info(f"{video_data.name()} has been proccessed already, skip it!!")
             return annotate_output
 
-        # [Speed Mode] Use online=False to pre-cache all frames to RAM before SLAM
-        # This uses more memory but makes SLAM passes much faster
-        # For memory-constrained systems, use online=True
+        # [Optimized] Remove .cache() calls to prevent loading full video to memory
+        # [Optimized] Remove .cache() calls to prevent loading full video to memory
+        # [Stability] PrefetchVideoStream disabled due to FFmpeg threading issues.
         slam_streams: list[VideoStream] = [
-            self._add_init_processors(video_stream).cache("process", online=False) for video_stream in video_streams
+            self._add_init_processors(video_stream) for video_stream in video_streams
         ]
 
+        # SLAM system consumes the streams first
         slam_pipeline = SLAMSystem(device=torch.device("cuda"), config=self.slam_cfg)
         slam_output = slam_pipeline.run(slam_streams, rig=slam_rig, camera_type=self.camera_type)
 
@@ -130,32 +132,54 @@ class DefaultAnnotationPipeline(Pipeline):
             annotate_output.payload = slam_output
             return annotate_output
 
+        # Re-create streams for output pass (post-processing)
+        # Note: Previous streams were consumed. We rely on underlying RawMp4Stream to support re-open.
         output_streams = [
-            self._add_post_processors(view_idx, slam_stream, slam_output).cache("depth", online=False)
+            self._add_post_processors(view_idx, slam_stream, slam_output)
             for view_idx, slam_stream in enumerate(slam_streams)
         ]
 
-        # Dumping artifacts for all views in the streams
-        for output_stream, artifact_path in zip(output_streams, artifact_paths):
+        # Streaming Output Loop
+        for i, (output_stream, artifact_path) in enumerate(zip(output_streams, artifact_paths)):
             artifact_path.meta_info_path.parent.mkdir(exist_ok=True, parents=True)
-            if self.out_cfg.save_artifacts:
-                logger.info(f"Saving artifacts to {artifact_path}")
-                io.save_artifacts(artifact_path, output_stream)
-                with artifact_path.meta_info_path.open("wb") as f:
-                    pickle.dump({"ba_residual": slam_output.ba_residual}, f)
-
-            if self.out_cfg.save_viz:
-                save_projection_video(
-                    artifact_path.meta_vis_path,
-                    output_stream,
-                    slam_output,
-                    self.out_cfg.viz_downsample,
-                    self.out_cfg.viz_attributes,
-                )
-
+            
+            # Save SLAM map first if needed
             if self.out_cfg.save_slam_map and slam_output.slam_map is not None:
                 logger.info(f"Saving SLAM map to {artifact_path.slam_map_path}")
                 slam_output.slam_map.save(artifact_path.slam_map_path)
+
+            writer = io.ArtifactWriter(artifact_path, output_stream.fps(), self.out_cfg.save_artifacts)
+            
+            viz_writer = None
+            if self.out_cfg.save_viz:
+                 viz_writer = VisualizationWriter(
+                    artifact_path.meta_vis_path,
+                    output_stream.fps(),
+                    output_stream.frame_size(),
+                    slam_output,
+                    self.out_cfg.viz_downsample,
+                    self.out_cfg.viz_attributes,
+                 )
+
+            logger.info(f"Processing output stream {i} (streaming mode)...")
+            
+            # Save meta info
+            if self.out_cfg.save_artifacts:
+                 with artifact_path.meta_info_path.open("wb") as f:
+                    pickle.dump({"ba_residual": slam_output.ba_residual}, f)
+
+            from tqdm import tqdm
+            for frame_idx, frame in tqdm(enumerate(output_stream), total=len(output_stream), desc="Writing artifacts"):
+                writer.write(frame_idx, frame)
+                if viz_writer:
+                    viz_writer.write(frame_idx, frame)
+                # Help GC
+                del frame
+            
+            writer.close()
+            if viz_writer:
+                viz_writer.close()
+                logger.info(f"Saved visualization to {artifact_path.meta_vis_path}")
 
         if self.return_output_streams:
             annotate_output.output_streams = output_streams

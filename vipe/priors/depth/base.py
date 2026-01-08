@@ -16,6 +16,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
+from typing import Iterator
 
 import numpy as np
 import torch
@@ -55,7 +57,7 @@ class DepthEstimationResult:
     - confidence: The confidence map ([B,], H, W).
     """
 
-    relative_inv_depth: torch.Tensor | None = None
+    relative_inv_depth: torch.Tensor | Iterator[np.ndarray] | None = None
     metric_depth: torch.Tensor | None = None
     confidence: torch.Tensor | None = None
 
@@ -73,7 +75,7 @@ class DepthEstimationInput:
     """
 
     rgb: torch.Tensor | None = None
-    video_frame_list: list[np.ndarray] | None = None
+    video_frame_list: list[np.ndarray] | Iterator[np.ndarray] | None = None
     prompt_metric_depth: torch.Tensor | None = None
     intrinsics: torch.Tensor | None = None
     camera_type: CameraType = CameraType.PINHOLE

@@ -142,7 +142,25 @@ class SparseDenseBlockMatrix(SparseBlockMatrix):
             raise NotImplementedError
         self_inds, mat_inds = self._tmult_mat_elements(mat.i_inds)
 
-        new_data = torch.einsum("bij,bik->bjk", self.data[self_inds], mat.data[mat_inds])
+        CHUNK_SIZE = 4096
+        # Pre-allocate output tensor
+        new_data = torch.empty(
+            (len(self_inds), self.data.shape[2], mat.data.shape[2]),
+            dtype=self.data.dtype,
+            device=self.data.device,
+        )
+
+        for i in range(0, len(self_inds), CHUNK_SIZE):
+            chunk_slice = slice(i, i + CHUNK_SIZE)
+            chunk_self_idx = self_inds[chunk_slice]
+            chunk_mat_idx = mat_inds[chunk_slice]
+            
+            new_data[chunk_slice] = torch.einsum(
+                "bij,bik->bjk", 
+                self.data[chunk_self_idx], 
+                mat.data[chunk_mat_idx]
+            )
+
         return SparseDenseBlockMatrix(
             i_inds=self.j_inds[self_inds],
             j_inds=mat.j_inds[mat_inds],
