@@ -103,6 +103,30 @@ class GeoCalibIntrinsicsProcessor(IntrinsicEstimationProcessor):
             self.distortion = [res["camera"].dist[0, 0].item()]
 
 
+class FixedIntrinsicsProcessor(StreamProcessor):
+    """Use user-provided fixed intrinsics instead of estimating them."""
+
+    def __init__(
+        self,
+        fx: float,
+        fy: float,
+        cx: float,
+        cy: float,
+        camera_type: CameraType = CameraType.PINHOLE,
+    ) -> None:
+        super().__init__()
+        self.intrinsics = torch.tensor([fx, fy, cx, cy], dtype=torch.float32)
+        self.camera_type = camera_type
+
+    def update_attributes(self, previous_attributes: set[FrameAttribute]) -> set[FrameAttribute]:
+        return previous_attributes | {FrameAttribute.INTRINSICS, FrameAttribute.CAMERA_TYPE}
+
+    def __call__(self, frame_idx: int, frame: VideoFrame) -> VideoFrame:
+        frame.intrinsics = self.intrinsics.clone()
+        frame.camera_type = self.camera_type
+        return frame
+
+
 class TrackAnythingProcessor(StreamProcessor):
     """
     A processor that tracks a mask caption in the video.

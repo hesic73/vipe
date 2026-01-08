@@ -35,6 +35,9 @@ output:
   path: vipe_results/
   skip_exists: false
 
+  # Pose-only mode: skip artifact writing, save only poses and intrinsics
+  pose_only: false
+
   # Save artifacts and a info file
   save_artifacts: false
 

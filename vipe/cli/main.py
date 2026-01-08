@@ -51,7 +51,13 @@ logger = logging.getLogger(__name__)
 )
 @click.option("--pipeline", "-p", default="default", help="Pipeline configuration to use (default: 'default')")
 @click.option("--visualize", "-v", is_flag=True, help="Enable visualization of intermediate results")
-def infer(video: Path, image_dir: Path, output: Path, pipeline: str, visualize: bool):
+@click.option("--pose-only", is_flag=True, help="Only save camera poses (skip depth/RGB artifacts for faster processing)")
+@click.option(
+    "--intrinsics",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to JSON file containing camera intrinsics (fx, fy, cx, cy, width, height)",
+)
+def infer(video: Path, image_dir: Path, output: Path, pipeline: str, visualize: bool, pose_only: bool, intrinsics: Path):
     """Run inference on a video file or directory of images."""
 
     logger = configure_logging()
@@ -71,6 +77,12 @@ def infer(video: Path, image_dir: Path, output: Path, pipeline: str, visualize: 
         overrides.append("pipeline.slam.visualize=true")
     else:
         overrides.append("pipeline.output.save_viz=false")
+    
+    if pose_only:
+        overrides.append("pipeline.output.pose_only=true")
+    
+    if intrinsics:
+        overrides.append(f"+pipeline.init.intrinsics_file={intrinsics}")
 
     # Set up stream configuration based on input type
     if image_dir:

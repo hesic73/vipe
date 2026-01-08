@@ -40,6 +40,7 @@ from vipe.utils.visualization import VisualizationWriter, save_projection_video
 from . import AnnotationPipelineOutput, Pipeline
 from .processors import (
     AdaptiveDepthProcessor,
+    FixedIntrinsicsProcessor,
     GeoCalibIntrinsicsProcessor,
     MultiviewDepthProcessor,
     TrackAnythingProcessor,
@@ -61,6 +62,7 @@ class DefaultAnnotationPipeline(Pipeline):
         self.camera_type = CameraType(self.init_cfg.camera_type)
 
     def _add_init_processors(self, video_stream: VideoStream) -> ProcessedVideoStream:
+        import json
         init_processors: list[StreamProcessor] = []
 
         # The assertions make sure that the attributes are not estimated previously.
@@ -70,7 +72,22 @@ class DefaultAnnotationPipeline(Pipeline):
         assert FrameAttribute.METRIC_DEPTH not in video_stream.attributes()
         assert FrameAttribute.INSTANCE not in video_stream.attributes()
 
-        init_processors.append(GeoCalibIntrinsicsProcessor(video_stream, camera_type=self.camera_type))
+        # Use user-provided intrinsics if available, otherwise estimate with GeoCalib
+        intrinsics_file = getattr(self.init_cfg, 'intrinsics_file', None)
+        if intrinsics_file is not None:
+            logger.info(f"Using fixed intrinsics from {intrinsics_file}")
+            with open(intrinsics_file, 'r') as f:
+                intr_data = json.load(f)
+            init_processors.append(FixedIntrinsicsProcessor(
+                fx=intr_data['fx'],
+                fy=intr_data['fy'],
+                cx=intr_data['cx'],
+                cy=intr_data['cy'],
+                camera_type=self.camera_type,
+            ))
+        else:
+            init_processors.append(GeoCalibIntrinsicsProcessor(video_stream, camera_type=self.camera_type))
+        
         if self.init_cfg.instance is not None:
             init_processors.append(
                 TrackAnythingProcessor(
@@ -98,6 +115,43 @@ class DefaultAnnotationPipeline(Pipeline):
             else:
                 post_processors.append(AdaptiveDepthProcessor(slam_output, view_idx, depth_align_model))
         return ProcessedVideoStream(video_stream, post_processors)
+
+    def _save_pose_only(self, slam_output: SLAMOutput, artifact_path: io.ArtifactPath, view_idx: int, num_frames: int) -> None:
+        """Save only poses and intrinsics from SLAM output, skipping all other artifacts.
+        
+        Output format: {base_path}/{artifact_name}/cameras.npz
+        This matches the expected format for convert_vipe_cameras.py
+        """
+        import numpy as np
+        
+        # Output to {artifact_name}/cameras.npz format
+        output_dir = artifact_path.base_path / artifact_path.artifact_name
+        output_dir.mkdir(exist_ok=True, parents=True)
+        pose_output_path = output_dir / "cameras.npz"
+        
+        # Get trajectory for this view
+        if slam_output.rig is not None:
+            trajectory = slam_output.get_view_trajectory(view_idx)
+        else:
+            trajectory = slam_output.trajectory
+        
+        # Convert SE3 trajectory to numpy arrays
+        # trajectory is SE3 with shape (N,), we need c2w matrices
+        pose_matrices = trajectory.matrix().cpu().numpy()  # (N, 4, 4)
+        pose_inds = np.arange(len(pose_matrices))
+        
+        # Get intrinsics
+        intrinsics = slam_output.intrinsics[view_idx].cpu().numpy()  # (4,) - fx, fy, cx, cy
+        intrinsics_data = np.tile(intrinsics, (num_frames, 1))  # (N, 4)
+        
+        # Save poses and intrinsics together in cameras.npz
+        np.savez(
+            pose_output_path,
+            data=pose_matrices,
+            inds=pose_inds,
+            intrinsics=intrinsics_data,
+        )
+        logger.info(f"Saved {len(pose_matrices)} poses to {pose_output_path}")
 
     def run(self, video_data: VideoStream | MultiviewVideoList) -> AnnotationPipelineOutput:
         if isinstance(video_data, MultiviewVideoList):
@@ -130,6 +184,13 @@ class DefaultAnnotationPipeline(Pipeline):
 
         if self.return_payload:
             annotate_output.payload = slam_output
+            return annotate_output
+
+        # Pose-only mode: skip post-processing and artifact writing, save only poses
+        if getattr(self.out_cfg, 'pose_only', False):
+            logger.info("Pose-only mode enabled - skipping artifact writing")
+            for view_idx, artifact_path in enumerate(artifact_paths):
+                self._save_pose_only(slam_output, artifact_path, view_idx, len(video_streams[view_idx]))
             return annotate_output
 
         # Re-create streams for output pass (post-processing)

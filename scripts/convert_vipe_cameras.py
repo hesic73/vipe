@@ -171,13 +171,14 @@ def split_video(video_path: str, chunk_duration: int, output_base_dir: str) -> l
     return chunks
 
 
-def run_vipe(video_path: str, output_dir: str) -> int:
+def run_vipe(video_path: str, output_dir: str, intrinsics_path: str) -> int:
     """
     Run VIPE on the video.
     
     Args:
         video_path: Path to input video
         output_dir: Directory for VIPE outputs
+        intrinsics_path: Path to intrinsics.json file
         
     Returns:
         Exit code (0 for success)
@@ -185,7 +186,7 @@ def run_vipe(video_path: str, output_dir: str) -> int:
     logger.info(f"Running VIPE on {video_path}")
     logger.info(f"Output dir: {output_dir}")
     
-    cmd = f"{sys.executable} -m vipe.cli.main infer {video_path} --output {output_dir}"
+    cmd = f"{sys.executable} -m vipe.cli.main infer {video_path} --output {output_dir} --pose-only --intrinsics {intrinsics_path}"
     logger.info(f"Executing: {cmd}")
     
     result = subprocess.call(cmd, shell=True)
@@ -210,10 +211,16 @@ def load_vipe_poses(vipe_dir: str, seq_name: str) -> tuple[np.ndarray, np.ndarra
         c2w: (N, 4, 4) camera-to-world matrices
         inds: (N,) frame indices
     """
-    pose_path = os.path.join(vipe_dir, "pose", f"{seq_name}.npz")
+    # New format: {seq_name}/cameras.npz
+    pose_path = os.path.join(vipe_dir, seq_name, "cameras.npz")
     
+    # Fallback to old format: pose/{seq_name}.npz
     if not os.path.exists(pose_path):
-        raise FileNotFoundError(f"VIPE pose file not found: {pose_path}")
+        pose_path_old = os.path.join(vipe_dir, "pose", f"{seq_name}.npz")
+        if os.path.exists(pose_path_old):
+            pose_path = pose_path_old
+        else:
+            raise FileNotFoundError(f"VIPE pose file not found: {pose_path} or {pose_path_old}")
     
     data = np.load(pose_path)
     c2w = data['data']  # (N, 4, 4) camera-to-world
@@ -265,7 +272,8 @@ def process_video(
     video_path: str, 
     folder: str, 
     vipe_dir: str, 
-    intrinsics: dict, 
+    intrinsics: dict,
+    intrinsics_path: str,
     output_filename: str, 
     skip_vipe: bool
 ):
@@ -273,16 +281,18 @@ def process_video(
     video_name = Path(video_path).stem
     logger.info(f"Processing {video_name}...")
     
-    # Run VIPE if needed
-    pose_path = os.path.join(vipe_dir, "pose", f"{video_name}.npz")
+    # Run VIPE if needed - check both new and old formats
+    pose_path_new = os.path.join(vipe_dir, video_name, "cameras.npz")
+    pose_path_old = os.path.join(vipe_dir, "pose", f"{video_name}.npz")
+    pose_exists = os.path.exists(pose_path_new) or os.path.exists(pose_path_old)
     
-    if not skip_vipe and not os.path.exists(pose_path):
+    if not skip_vipe and not pose_exists:
         logger.info("VIPE results not found, running VIPE...")
-        result = run_vipe(video_path, vipe_dir)
+        result = run_vipe(video_path, vipe_dir, intrinsics_path)
         if result != 0:
             logger.error("VIPE failed, cannot process further")
             return
-    elif os.path.exists(pose_path):
+    elif pose_exists:
         logger.info(f"Using existing VIPE results from {vipe_dir}")
     else:
         logger.warning(f"VIPE results not found for {video_name} and --skip-vipe specified. Skipping.")
@@ -392,7 +402,8 @@ def main():
                     chunk_path, 
                     folder, 
                     vipe_dir, 
-                    intrinsics, 
+                    intrinsics,
+                    intrinsics_path,
                     args.output, 
                     args.skip_vipe
                 )
@@ -403,7 +414,8 @@ def main():
                 video_path, 
                 folder, 
                 vipe_dir, 
-                intrinsics, 
+                intrinsics,
+                intrinsics_path,
                 args.output, 
                 args.skip_vipe
             )
