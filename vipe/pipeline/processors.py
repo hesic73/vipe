@@ -193,28 +193,25 @@ class AdaptiveDepthProcessor(StreamProcessor):
         depth_exist = depth_crop.any(dim=(1, 3))
         return depth_exist.float().mean().item()
 
-    def _compute_video_da(self, frame_iterator: Iterator[VideoFrame]) -> tuple[Iterator[np.ndarray], Iterator[VideoFrame]]:
-        import itertools
-        
-        frame_iter1, frame_iter2 = itertools.tee(frame_iterator, 2)
-        
-        def numpy_frame_gen():
-            for frame in frame_iter1:
-                yield frame.rgb.cpu().numpy()
+    def _compute_video_da(self, frame_iterator: Iterator[VideoFrame]) -> tuple[torch.Tensor, list[VideoFrame]]:
+        frame_list: list[np.ndarray] = []
+        frame_data_list: list[VideoFrame] = []
+        for frame in frame_iterator:
+            frame_data_list.append(frame.cpu())
+            frame_list.append(frame.rgb.cpu().numpy())
 
-        video_depth_result = unpack_optional(
-            self.video_depth_model.estimate(DepthEstimationInput(video_frame_list=numpy_frame_gen())).relative_inv_depth
+        video_depth_result: torch.Tensor = unpack_optional(
+            self.video_depth_model.estimate(DepthEstimationInput(video_frame_list=frame_list)).relative_inv_depth
         )
-        return video_depth_result, frame_iter2
+        return video_depth_result, frame_data_list
 
     def update_iterator(self, previous_iterator: Iterator[VideoFrame], pass_idx: int) -> Iterator[VideoFrame]:
         # Determine the percentage score of the SLAM map.
-        
+
         self.cache_scale_bias = None
         min_uv_score: float = 1.0
 
         if self.video_depth_model is not None:
-            # video_depth_result is now an iterator of np.ndarray
             video_depth_result, data_iterator = self._compute_video_da(previous_iterator)
         else:
             video_depth_result = None
@@ -272,7 +269,7 @@ class AdaptiveDepthProcessor(StreamProcessor):
                 frame.information = f"uv={min_uv_score:.2f}(SLAM)"
 
             if video_depth_result is not None:
-                video_depth_inv_depth = torch.from_numpy(next(video_depth_result)).float().cuda()
+                video_depth_inv_depth = video_depth_result[frame_idx]
 
                 align_mask = video_depth_inv_depth > 1e-3
                 if frame.mask is not None:
@@ -285,12 +282,7 @@ class AdaptiveDepthProcessor(StreamProcessor):
                         align_mask,
                     )
                 except RuntimeError:
-                    if self.cache_scale_bias is not None:
-                        scale, bias = self.cache_scale_bias
-                    else:
-                        frame.metric_depth = prompt_result
-                        yield frame
-                        continue
+                    scale, bias = self.cache_scale_bias
 
                 # momentum update
                 if self.cache_scale_bias is None:

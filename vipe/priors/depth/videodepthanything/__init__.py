@@ -67,15 +67,7 @@ class VideoDepthAnythingDepthModel(DepthEstimationModel):
         return DepthType.AFFINE_DISP
 
     def estimate(self, src: DepthEstimationInput) -> DepthEstimationResult:
-        frames = unpack_optional(src.video_frame_list)
-        
-        if isinstance(frames, list):
-            depths = self.model.infer_video_depth(frames, input_size=self.input_size, fp32=self.use_fp32)  # [T, H, W]
-            depths = torch.from_numpy(depths).float().cuda()
-            return DepthEstimationResult(relative_inv_depth=depths)
-        else:
-            # Assume frames is Iterator[np.ndarray]
-            depths_iter = self.model.infer_video_depth_stream(
-                frames, input_size=self.input_size, fp32=self.use_fp32
-            )
-            return DepthEstimationResult(relative_inv_depth=depths_iter)
+        frame_list: list[np.ndarray] = unpack_optional(src.video_frame_list)
+        depths = self.model.infer_video_depth(frame_list, input_size=self.input_size, fp32=self.use_fp32)  # [T, H, W]
+        depths = torch.from_numpy(depths).float().cuda()
+        return DepthEstimationResult(relative_inv_depth=depths)
